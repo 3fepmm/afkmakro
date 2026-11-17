@@ -5,12 +5,12 @@ import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.view.Display
@@ -19,7 +19,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.io.File
@@ -27,91 +26,27 @@ import java.io.FileOutputStream
 import java.util.concurrent.Executors
 import kotlin.random.Random
 
-class Gray(val w: Int, val h: Int, val d: IntArray)
-
-object Matcher {
-    const val SCALE = 4
-
-    fun gray(b: Bitmap, scale: Int): Gray {
-        val ww = b.width / scale
-        val hh = b.height / scale
-        val s = Bitmap.createScaledBitmap(b, ww, hh, true)
-        val px = IntArray(ww * hh)
-        s.getPixels(px, 0, ww, 0, 0, ww, hh)
-        for (i in px.indices) {
-            val c = px[i]
-            val r = (c shr 16) and 0xFF
-            val g = (c shr 8) and 0xFF
-            val bl = c and 0xFF
-            px[i] = (r * 77 + g * 151 + bl * 28) shr 8
-        }
-        return Gray(ww, hh, px)
-    }
-
-    fun find(scr: Gray, t: Gray, tol: Int): IntArray? {
-        if (t.w < 4 || t.h < 4 || t.w > scr.w || t.h > scr.h) return null
-        var best = tol.toLong() * t.w * t.h + 1
-        var bx = -1
-        var by = -1
-        for (y in 0..scr.h - t.h) {
-            for (x in 0..scr.w - t.w) {
-                var sum = 0L
-                var ty = 0
-                while (ty < t.h && sum < best) {
-                    val so = (y + ty) * scr.w + x
-                    val to = ty * t.w
-                    var tx = 0
-                    while (tx < t.w) {
-                        val d = scr.d[so + tx] - t.d[to + tx]
-                        sum += if (d < 0) -d else d
-                        tx++
-                    }
-                    ty++
-                }
-                if (sum < best) {
-                    best = sum
-                    bx = x
-                    by = y
-                }
-            }
-        }
-        if (bx < 0) return null
-        return intArrayOf((bx + t.w / 2) * SCALE, (by + t.h / 2) * SCALE)
-    }
-}
-
-class SelectView(ctx: Context) : View(ctx) {
-    var r: Rect? = null
-    private val paint = Paint()
-
-    init {
-        paint.color = Color.YELLOW
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 4f
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val rr = r
-        if (rr != null) canvas.drawRect(rr, paint)
-    }
-}
-
 class MacroService : AccessibilityService() {
     private val h = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var wm: WindowManager
     private var panel: LinearLayout? = null
+    private var bubble: TextView? = null
     private var capture: SelectView? = null
     private var status: TextView? = null
-    private var recBtn: Button? = null
+    private var recBtn: TextView? = null
+    private var bOn: GradientDrawable? = null
+    private var bOff: GradientDrawable? = null
+    private var minimized = false
+    private var delArmed = false
+    private var px = 0
+    private var py = 0
     private var steps = mutableListOf<Step>()
     private var recording = false
     private var playing = false
     private var scanning = false
     private var clicking = false
     private var capMode = 0
-    private var rightSide = false
     private var idx = 0
     private var round = 0
     private var clickCount = 0
@@ -120,17 +55,37 @@ class MacroService : AccessibilityService() {
     private var token = 0
     private var lastEnd = 0L
     private var downWall = 0L
+    private var lastPkg = ""
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         steps = Store.loadSteps(this)
+        val p = Store.prefs(this)
+        px = p.getInt("px", dp(8))
+        py = p.getInt("py", dp(120))
         buildPanel()
         showPanel()
-        setStatus("Hazır: ${steps.size} adım")
+        setStatus("Hazır: ${steps.size} adım, ${templateCount()} resim")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg == packageName || pkg == "com.android.systemui") return
+        val entered = pkg == "com.roblox.client" && lastPkg != pkg
+        lastPkg = pkg
+        if (entered && Store.prefs(this).getInt("autoScan", 0) == 1) {
+            if (!playing && !scanning && !clicking && !recording && capture == null) {
+                h.postDelayed({
+                    if (!playing && !scanning && !clicking && !recording && capture == null) {
+                        startScan()
+                    }
+                }, 6000L)
+            }
+        }
+    }
 
     override fun onInterrupt() {}
 
@@ -139,86 +94,201 @@ class MacroService : AccessibilityService() {
         h.removeCallbacksAndMessages(null)
         worker.shutdown()
         if (::wm.isInitialized) {
-            val pn = panel
-            if (pn != null) {
-                try { wm.removeView(pn) } catch (e: Exception) {}
-            }
-            val c = capture
-            if (c != null) {
-                try { wm.removeView(c) } catch (e: Exception) {}
+            for (v in listOf<View?>(panel, bubble, capture)) {
+                if (v != null) {
+                    try { wm.removeView(v) } catch (e: Exception) {}
+                }
             }
         }
         super.onDestroy()
     }
 
-    // ---------- Panel ----------
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    private fun btn(t: String, onClick: () -> Unit): Button {
-        val b = Button(this)
-        b.text = t
-        b.textSize = 11f
-        b.setAllCaps(false)
-        b.setPadding(8, 0, 8, 0)
-        b.minWidth = 0
-        b.minimumWidth = 0
+    private fun rounded(color: Int, radiusDp: Int): GradientDrawable {
+        val g = GradientDrawable()
+        g.setColor(color)
+        g.cornerRadius = dp(radiusDp).toFloat()
+        return g
+    }
+
+    private fun oval(color: Int): GradientDrawable {
+        val g = GradientDrawable()
+        g.shape = GradientDrawable.OVAL
+        g.setColor(color)
+        return g
+    }
+        // ---------- Panel ----------
+
+    private fun templateCount(): Int = Store.prefs(this).getInt("tplCount", 0)
+
+    private fun btn(label: String, color: Int, onClick: () -> Unit): TextView {
+        val b = TextView(this)
+        b.text = label
+        b.setTextColor(Color.WHITE)
+        b.textSize = 12f
+        b.setTypeface(null, Typeface.BOLD)
+        b.gravity = Gravity.CENTER
+        b.maxLines = 1
+        b.background = rounded(color, 12)
+        val lp = LinearLayout.LayoutParams(0, dp(46), 1f)
+        lp.setMargins(dp(3), dp(3), dp(3), dp(3))
+        b.layoutParams = lp
+        b.setOnTouchListener { view, e ->
+            if (e.action == MotionEvent.ACTION_DOWN) {
+                view.alpha = 0.6f
+            } else if (e.action == MotionEvent.ACTION_UP ||
+                e.action == MotionEvent.ACTION_CANCEL
+            ) {
+                view.alpha = 1f
+            }
+            false
+        }
         b.setOnClickListener { onClick() }
         return b
     }
 
+    private fun makeDraggable(v: View, onTap: (() -> Unit)?) {
+        var sx = 0f
+        var sy = 0f
+        var ox = 0
+        var oy = 0
+        var moved = false
+        v.setOnTouchListener { _, e ->
+            if (e.action == MotionEvent.ACTION_DOWN) {
+                sx = e.rawX
+                sy = e.rawY
+                ox = px
+                oy = py
+                moved = false
+            } else if (e.action == MotionEvent.ACTION_MOVE) {
+                val dx = e.rawX - sx
+                val dy = e.rawY - sy
+                val lim = dp(6).toFloat()
+                if (Math.abs(dx) > lim || Math.abs(dy) > lim) moved = true
+                if (moved) {
+                    px = ox + dx.toInt()
+                    py = oy + dy.toInt()
+                    val lp = v.layoutParams as WindowManager.LayoutParams
+                    lp.x = px
+                    lp.y = py
+                    try { wm.updateViewLayout(v, lp) } catch (ex: Exception) {}
+                }
+            } else if (e.action == MotionEvent.ACTION_UP) {
+                if (moved) {
+                    Store.prefs(this).edit().putInt("px", px).putInt("py", py).apply()
+                } else {
+                    onTap?.invoke()
+                }
+            }
+            true
+        }
+    }
+
     private fun buildPanel() {
-        val box = LinearLayout(this)
-        box.orientation = LinearLayout.VERTICAL
-        box.setBackgroundColor(Color.argb(200, 30, 30, 30))
-        box.setPadding(8, 8, 8, 8)
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.background = rounded(Color.argb(240, 24, 26, 34), 18)
+        root.setPadding(dp(10), dp(10), dp(10), dp(10))
 
         val st = TextView(this)
         st.setTextColor(Color.WHITE)
-        st.textSize = 12f
+        st.textSize = 13f
+        st.setTypeface(null, Typeface.BOLD)
+        st.setPadding(dp(4), dp(2), dp(4), dp(8))
         status = st
 
         val row1 = LinearLayout(this)
         row1.orientation = LinearLayout.HORIZONTAL
-        val rec = btn("Kayıt") { toggleRecord() }
+        val rec = btn("Kayıt", Color.rgb(59, 130, 246)) { toggleRecord() }
         recBtn = rec
         row1.addView(rec)
-        row1.addView(btn("Oynat") { startPlay() })
-        row1.addView(btn("Dur") { stopPlay("Durdu") })
-        row1.addView(btn("Yan") {
-            rightSide = !rightSide
+        row1.addView(btn("Oynat", Color.rgb(34, 197, 94)) { startPlay() })
+        row1.addView(btn("Dur", Color.rgb(239, 68, 68)) { stopPlay("Durdu") })
+        row1.addView(btn("Küçült", Color.rgb(107, 114, 128)) {
+            minimized = true
             showPanel()
         })
 
         val row2 = LinearLayout(this)
         row2.orientation = LinearLayout.HORIZONTAL
-        row2.addView(btn("Resim+") { startSelect() })
-        row2.addView(btn("Tara") { startScan() })
-        row2.addView(btn("Tık") { startPick() })
-        row2.addView(btn("ResSil") { clearTemplates() })
+        row2.addView(btn("Resim+", Color.rgb(139, 92, 246)) { startSelect() })
+        row2.addView(btn("Tara", Color.rgb(245, 158, 11)) { startScan() })
+        row2.addView(btn("Tık", Color.rgb(20, 184, 166)) { startPick() })
+        row2.addView(btn("Resim-", Color.rgb(107, 114, 128)) { askDelete() })
 
-        box.addView(st)
-        box.addView(row1)
-        box.addView(row2)
-        panel = box
+        root.addView(st)
+        root.addView(row1)
+        root.addView(row2)
+        makeDraggable(root, null)
+        panel = root
+
+        val b = TextView(this)
+        b.text = "AFK"
+        b.setTextColor(Color.WHITE)
+        b.textSize = 13f
+        b.setTypeface(null, Typeface.BOLD)
+        b.gravity = Gravity.CENTER
+        bOff = oval(Color.argb(235, 55, 65, 110))
+        bOn = oval(Color.rgb(34, 197, 94))
+        b.background = bOff
+        makeDraggable(b) {
+            minimized = false
+            showPanel()
+        }
+        bubble = b
     }
 
     private fun showPanel() {
-        val p = panel ?: return
-        try { wm.removeView(p) } catch (e: Exception) {}
+        val pn = panel ?: return
+        val bb = bubble ?: return
+        try { wm.removeView(pn) } catch (e: Exception) {}
+        try { wm.removeView(bb) } catch (e: Exception) {}
+        val v: View = if (minimized) bb else pn
+        val w = if (minimized) dp(52) else dp(310)
+        val hgt = if (minimized) dp(52) else WindowManager.LayoutParams.WRAP_CONTENT
+        val m = resources.displayMetrics
+        px = px.coerceIn(0, (m.widthPixels - w).coerceAtLeast(0))
+        py = py.coerceIn(0, (m.heightPixels - dp(60)).coerceAtLeast(0))
         val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            w, hgt,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
             PixelFormat.TRANSLUCENT
         )
-        lp.gravity = Gravity.TOP or (if (rightSide) Gravity.END else Gravity.START)
-        lp.y = 120
-        wm.addView(p, lp)
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.x = px
+        lp.y = py
+        wm.addView(v, lp)
+        refreshBubble()
+    }
+
+    private fun refreshBubble() {
+        val b = bubble ?: return
+        val on = playing || scanning || clicking
+        b.background = if (on) bOn else bOff
+        b.text = if (scanning) "TARA" else if (clicking) "TIK" else if (playing) "OYN" else "AFK"
     }
 
     private fun setStatus(t: String) {
         status?.text = t
+        refreshBubble()
+    }
+
+    private fun askDelete() {
+        if (delArmed) {
+            delArmed = false
+            clearTemplates()
+        } else {
+            delArmed = true
+            setStatus("Tüm resimler silinecek. Onay için Resim- tekrar bas")
+            h.postDelayed({ delArmed = false }, 4000L)
+        }
+    }
+            private fun minimize() {
+        minimized = true
+        showPanel()
     }
 
     // ---------- Dokunuş yakalama katmanı ----------
@@ -227,7 +297,16 @@ class MacroService : AccessibilityService() {
         hideCapture()
         capMode = mode
         val v = SelectView(this)
-        v.setBackgroundColor(Color.argb(50, 0, 120, 255))
+        v.setBackgroundColor(Color.argb(60, 0, 120, 255))
+        v.hintTop = 0.45f
+        v.hint = if (mode == 0) {
+            "KAYIT\nOyunda dokunacağın yerlere sırayla dokun.\nBitirince panelde Bitir'e bas."
+        } else if (mode == 1) {
+            "RESİM SEÇ\nBastırmak istediğin düğmenin üstünü\nparmağınla sürükleyerek çerçevele.\n" +
+                "Parmağını bırakınca kaydedilir."
+        } else {
+            "TIK NOKTASI\nSürekli tıklanacak yere bir kez dokun.\nDurdurmak için Dur'a bas."
+        }
         var sx = 0f
         var sy = 0f
         var lx = 0f
@@ -241,6 +320,7 @@ class MacroService : AccessibilityService() {
                 downWall = System.currentTimeMillis()
             } else if (e.action == MotionEvent.ACTION_MOVE) {
                 if (capMode == 1) {
+                    v.hint = ""
                     v.r = Rect(
                         minOf(lx, e.x).toInt(), minOf(ly, e.y).toInt(),
                         maxOf(lx, e.x).toInt(), maxOf(ly, e.y).toInt()
@@ -286,7 +366,8 @@ class MacroService : AccessibilityService() {
             steps.add(Step(sx, sy, ex, ey, dur, delay))
             lastEnd = System.currentTimeMillis()
             setStatus("Kayıt: ${steps.size} adım")
-        } else if (capMode == 1) {            val r = Rect(
+        } else if (capMode == 1) {
+            val r = Rect(
                 minOf(sx, e.rawX).toInt(), minOf(sy, e.rawY).toInt(),
                 maxOf(sx, e.rawX).toInt(), maxOf(sy, e.rawY).toInt()
             )
@@ -309,6 +390,7 @@ class MacroService : AccessibilityService() {
             setStatus("Kaydedildi: ${steps.size} adım")
         } else {
             stopPlay("Kayıt modu")
+            minimized = false
             steps = mutableListOf()
             recording = true
             lastEnd = 0L
@@ -384,7 +466,7 @@ class MacroService : AccessibilityService() {
             }
         )
     }
-    // ---------- Makro oynatma ----------
+        // ---------- Makro oynatma ----------
 
     private fun startPlay() {
         if (recording) toggleRecord()
@@ -398,6 +480,7 @@ class MacroService : AccessibilityService() {
         val stopMin = p.getInt("stopMin", 0)
         playing = true
         val my = ++token
+        minimize()
         if (startMs > 0) setStatus("${startMs / 60000} dk sonra başlar")
         h.postDelayed({
             if (playing && my == token) {
@@ -459,25 +542,34 @@ class MacroService : AccessibilityService() {
 
     private fun startSelect() {
         if (recording) toggleRecord()
-        stopPlay("Resmin üstünü sürükleyerek seç")
+        stopPlay("Resim seç")
         showCapture(1)
+        minimized = true
         showPanel()
     }
 
     private fun saveTemplate(r: Rect) {
         if (r.width() < 32 || r.height() < 32) {
+            minimized = false
+            showPanel()
             setStatus("Alan çok küçük, tekrar dene")
             return
         }
-        val count = Store.prefs(this).getInt("tplCount", 0)
+        val count = templateCount()
         if (count >= 8) {
-            setStatus("En fazla 8 resim")
+            minimized = false
+            showPanel()
+            setStatus("En fazla 8 resim. Resim- ile temizle")
             return
         }
         panel?.visibility = View.INVISIBLE
+        bubble?.visibility = View.INVISIBLE
         h.postDelayed({
             shoot { bmp ->
                 panel?.visibility = View.VISIBLE
+                bubble?.visibility = View.VISIBLE
+                minimized = false
+                showPanel()
                 if (bmp == null) {
                     setStatus("Ekran alınamadı")
                 } else {
@@ -497,7 +589,7 @@ class MacroService : AccessibilityService() {
     }
 
     private fun loadTemplates(): List<Bitmap> {
-        val n = Store.prefs(this).getInt("tplCount", 0)
+        val n = templateCount()
         val out = mutableListOf<Bitmap>()
         for (i in 0 until n) {
             val f = File(filesDir, "tpl_$i.png")
@@ -510,17 +602,20 @@ class MacroService : AccessibilityService() {
     }
 
     private fun clearTemplates() {
-        val n = Store.prefs(this).getInt("tplCount", 0)
+        val n = templateCount()
         for (i in 0 until n) {
             File(filesDir, "tpl_$i.png").delete()
         }
         Store.prefs(this).edit().putInt("tplCount", 0).apply()
         setStatus("Resimler silindi")
     }
+
     private fun startScan() {
         if (recording) toggleRecord()
         val tpls = loadTemplates()
         if (tpls.isEmpty()) {
+            minimized = false
+            showPanel()
             setStatus("Önce Resim+ ile resim ekle")
             return
         }
@@ -531,6 +626,7 @@ class MacroService : AccessibilityService() {
         val stopMin = p.getInt("stopMin", 0)
         scanning = true
         val my = ++token
+        minimize()
         if (startMs > 0) setStatus("${startMs / 60000} dk sonra başlar")
         h.postDelayed({
             if (scanning && my == token) {
@@ -602,12 +698,13 @@ class MacroService : AccessibilityService() {
             }
         }
     }
-    // ---------- Oto clicker ----------
+        // ---------- Oto clicker ----------
 
     private fun startPick() {
         if (recording) toggleRecord()
         stopPlay("Tıklanacak yere dokun")
         showCapture(2)
+        minimized = true
         showPanel()
     }
 
@@ -618,6 +715,7 @@ class MacroService : AccessibilityService() {
         clickCount = 0
         clicking = true
         val my = ++token
+        minimize()
         clickTick(my, x, y)
     }
 
