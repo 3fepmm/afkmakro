@@ -25,8 +25,11 @@ class MainActivity : Activity() {
         info.textSize = 15f
         info.text = "1) Aşağıdan Erişilebilirlik ayarlarını aç, AFK Makro'yu etkinleştir.\n" +
             "2) Roblox'u aç. Ekranda küçük bir panel görünür.\n" +
-            "3) Panelde Kayıt'a bas, oyunda dokunacağın yerlere sırayla dokun, Bitir'e bas.\n" +
-            "4) Oynat'a bas. Dur ile durdur."
+            "3) Kayıt: dokunacağın yerlere sırayla dokun, Bitir'e bas. Oynat ile tekrar eder.\n" +
+            "4) Resim+: bastırmak istediğin düğmenin üstünü sürükleyerek seç (en fazla 8). " +
+            "Tara: bu düğmeler ekranda görününce otomatik basar. ResSil: resimleri siler.\n" +
+            "5) Tık: bir noktaya dokun, orayı sürekli tıklar.\n" +
+            "6) Dur ile hepsini durdur. Süre ayarları Oynat, Tara ve Tık için geçerli."
         box.addView(info)
 
         val open = Button(this)
@@ -41,7 +44,11 @@ class MainActivity : Activity() {
             Triple("rounds", 0, "Tur sayısı (0 = sınırsız)"),
             Triple("afkMin", 10, "Anti-AFK dokunuşu aralığı (dk, 0 = kapalı)"),
             Triple("stopMin", 0, "Kaç dakika sonra dursun (0 = durmasın)"),
-            Triple("startMin", 0, "Kaç dakika sonra başlasın (0 = hemen)")
+            Triple("startMin", 0, "Kaç dakika sonra başlasın (0 = hemen)"),
+            Triple("scanSec", 2, "Tarama aralığı (sn)"),
+            Triple("tol", 25, "Resim eşleşme toleransı (10-40, düşük = sıkı)"),
+            Triple("clickMs", 200, "Otomatik tık aralığı (ms)"),
+            Triple("clickMax", 0, "Otomatik tık sayısı (0 = sınırsız)")
         )
         val fields = mutableMapOf<String, EditText>()
         for ((key, def, label) in keys) {
