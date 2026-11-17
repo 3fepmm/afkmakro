@@ -517,3 +517,88 @@ class MacroService : AccessibilityService() {
         Store.prefs(this).edit().putInt("tplCount", 0).apply()
         setStatus("Resimler silindi")
     }
+    private fun startScan() {
+        if (recording) toggleRecord()
+        val tpls = loadTemplates()
+        if (tpls.isEmpty()) {
+            setStatus("Önce Resim+ ile resim ekle")
+            return
+        }
+        stopPlay("Tarama başlıyor")
+        val p = Store.prefs(this)
+        val grays = tpls.map { Matcher.gray(it, Matcher.SCALE) }
+        val startMs = p.getInt("startMin", 0) * 60000L
+        val stopMin = p.getInt("stopMin", 0)
+        scanning = true
+        val my = ++token
+        if (startMs > 0) setStatus("${startMs / 60000} dk sonra başlar")
+        h.postDelayed({
+            if (scanning && my == token) {
+                val now = System.currentTimeMillis()
+                stopAt = if (stopMin > 0) now + stopMin * 60000L else 0L
+                lastAfk = now
+                scanTick(my, grays)
+            }
+        }, startMs)
+    }
+
+    private fun scanTick(my: Int, grays: List<Gray>) {
+        if (!scanning || my != token) return
+        val p = Store.prefs(this)
+        val now = System.currentTimeMillis()
+        if (stopAt > 0 && now >= stopAt) {
+            stopPlay("Süre doldu")
+            return
+        }
+        val afkMs = p.getInt("afkMin", 10) * 60000L
+        if (afkMs > 0 && now - lastAfk >= afkMs) {
+            lastAfk = now
+            val m = resources.displayMetrics
+            val cx = m.widthPixels * 0.75f
+            val cy = m.heightPixels * 0.5f
+            gesture(cx, cy, cx + 80f, cy, 250L) {
+                h.postDelayed({ scanTick(my, grays) }, 500L)
+            }
+            return
+        }
+        val every = p.getInt("scanSec", 2).coerceAtLeast(1) * 1000L
+        val tol = p.getInt("tol", 25)
+        shoot { bmp ->
+            if (!scanning || my != token) return@shoot
+            if (bmp == null) {
+                setStatus("Ekran alınamadı")
+                h.postDelayed({ scanTick(my, grays) }, every)
+            } else {
+                worker.execute {
+                    val scr = Matcher.gray(bmp, Matcher.SCALE)
+                    var hit: IntArray? = null
+                    var which = -1
+                    for (i in grays.indices) {
+                        val r = Matcher.find(scr, grays[i], tol)
+                        if (r != null) {
+                            hit = r
+                            which = i
+                            break
+                        }
+                    }
+                    val found: IntArray? = hit
+                    val num = which + 1
+                    h.post {
+                        if (scanning && my == token) {
+                            if (found != null) {
+                                setStatus("Bulundu: resim $num")
+                                val fx = found[0].toFloat()
+                                val fy = found[1].toFloat()
+                                gesture(fx, fy, fx, fy, 60L) {
+                                    h.postDelayed({ scanTick(my, grays) }, 1500L)
+                                }
+                            } else {
+                                setStatus("Aranıyor...")
+                                h.postDelayed({ scanTick(my, grays) }, every)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
