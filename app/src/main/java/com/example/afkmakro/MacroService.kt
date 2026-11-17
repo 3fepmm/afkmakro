@@ -602,3 +602,43 @@ class MacroService : AccessibilityService() {
             }
         }
     }
+    // ---------- Oto clicker ----------
+
+    private fun startPick() {
+        if (recording) toggleRecord()
+        stopPlay("Tıklanacak yere dokun")
+        showCapture(2)
+        showPanel()
+    }
+
+    private fun startClick(x: Float, y: Float) {
+        stopPlay("Tıklıyor")
+        val stopMin = Store.prefs(this).getInt("stopMin", 0)
+        stopAt = if (stopMin > 0) System.currentTimeMillis() + stopMin * 60000L else 0L
+        clickCount = 0
+        clicking = true
+        val my = ++token
+        clickTick(my, x, y)
+    }
+
+    private fun clickTick(my: Int, x: Float, y: Float) {
+        if (!clicking || my != token) return
+        val p = Store.prefs(this)
+        if (stopAt > 0 && System.currentTimeMillis() >= stopAt) {
+            stopPlay("Süre doldu")
+            return
+        }
+        val maxC = p.getInt("clickMax", 0)
+        if (maxC > 0 && clickCount >= maxC) {
+            stopPlay("Bitti: $clickCount tık")
+            return
+        }
+        val base = p.getInt("clickMs", 200).toLong().coerceAtLeast(50L)
+        val gap = jittered(base, p.getInt("jitter", 20))
+        gesture(x, y, x, y, 30L) {
+            clickCount++
+            setStatus("Tık: $clickCount")
+            h.postDelayed({ clickTick(my, x, y) }, gap)
+        }
+    }
+}
