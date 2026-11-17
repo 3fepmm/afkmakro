@@ -384,3 +384,136 @@ class MacroService : AccessibilityService() {
             }
         )
     }
+    // ---------- Makro oynatma ----------
+
+    private fun startPlay() {
+        if (recording) toggleRecord()
+        if (steps.isEmpty()) {
+            setStatus("Önce kayıt yap")
+            return
+        }
+        stopPlay("Başlıyor")
+        val p = Store.prefs(this)
+        val startMs = p.getInt("startMin", 0) * 60000L
+        val stopMin = p.getInt("stopMin", 0)
+        playing = true
+        val my = ++token
+        if (startMs > 0) setStatus("${startMs / 60000} dk sonra başlar")
+        h.postDelayed({
+            if (playing && my == token) {
+                val now = System.currentTimeMillis()
+                stopAt = if (stopMin > 0) now + stopMin * 60000L else 0L
+                lastAfk = now
+                idx = 0
+                round = 0
+                next(my)
+            }
+        }, startMs)
+    }
+
+    private fun next(my: Int) {
+        if (!playing || my != token) return
+        val p = Store.prefs(this)
+        val now = System.currentTimeMillis()
+        if (stopAt > 0 && now >= stopAt) {
+            stopPlay("Süre doldu")
+            return
+        }
+        val afkMs = p.getInt("afkMin", 10) * 60000L
+        if (afkMs > 0 && now - lastAfk >= afkMs) {
+            lastAfk = now
+            val m = resources.displayMetrics
+            val cx = m.widthPixels * 0.75f
+            val cy = m.heightPixels * 0.5f
+            gesture(cx, cy, cx + 80f, cy, 250L) {
+                h.postDelayed({ next(my) }, 500L)
+            }
+            return
+        }
+        val s = steps[idx]
+        setStatus("Tur ${round + 1}  adım ${idx + 1}/${steps.size}")
+        val wait = jittered(s.delay, p.getInt("jitter", 20))
+        h.postDelayed({
+            if (playing && my == token) {
+                gesture(s.x1, s.y1, s.x2, s.y2, s.dur) { afterStep(my) }
+            }
+        }, wait)
+    }
+
+    private fun afterStep(my: Int) {
+        if (!playing || my != token) return
+        idx++
+        if (idx >= steps.size) {
+            idx = 0
+            round++
+            val maxR = Store.prefs(this).getInt("rounds", 0)
+            if (maxR > 0 && round >= maxR) {
+                stopPlay("Bitti: $round tur")
+                return
+            }
+        }
+        next(my)
+    }
+
+    // ---------- Ekran tanıma ----------
+
+    private fun startSelect() {
+        if (recording) toggleRecord()
+        stopPlay("Resmin üstünü sürükleyerek seç")
+        showCapture(1)
+        showPanel()
+    }
+
+    private fun saveTemplate(r: Rect) {
+        if (r.width() < 32 || r.height() < 32) {
+            setStatus("Alan çok küçük, tekrar dene")
+            return
+        }
+        val count = Store.prefs(this).getInt("tplCount", 0)
+        if (count >= 8) {
+            setStatus("En fazla 8 resim")
+            return
+        }
+        panel?.visibility = View.INVISIBLE
+        h.postDelayed({
+            shoot { bmp ->
+                panel?.visibility = View.VISIBLE
+                if (bmp == null) {
+                    setStatus("Ekran alınamadı")
+                } else {
+                    val l = r.left.coerceIn(0, bmp.width - 2)
+                    val t = r.top.coerceIn(0, bmp.height - 2)
+                    val w = (minOf(r.right, bmp.width) - l).coerceAtLeast(1)
+                    val hh = (minOf(r.bottom, bmp.height) - t).coerceAtLeast(1)
+                    val crop = Bitmap.createBitmap(bmp, l, t, w, hh)
+                    FileOutputStream(File(filesDir, "tpl_$count.png")).use {
+                        crop.compress(Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                    Store.prefs(this).edit().putInt("tplCount", count + 1).apply()
+                    setStatus("Resim eklendi: ${count + 1}")
+                }
+            }
+        }, 400L)
+    }
+
+    private fun loadTemplates(): List<Bitmap> {
+        val n = Store.prefs(this).getInt("tplCount", 0)
+        val out = mutableListOf<Bitmap>()
+        for (i in 0 until n) {
+            val f = File(filesDir, "tpl_$i.png")
+            if (f.exists()) {
+                val b = BitmapFactory.decodeFile(f.path)
+                if (b != null) out.add(b)
+            }
+        }
+        return out
+    }
+
+    private fun clearTemplates() {
+        val n = Store.prefs(this).getInt("tplCount", 0)
+        for (i in 0 until n) {
+            File(filesDir, "tpl_$i.png").delete()
+        }
+        Store.prefs(this).edit().putInt("tplCount", 0).apply()
+        setStatus("Resimler silindi")
+    }
