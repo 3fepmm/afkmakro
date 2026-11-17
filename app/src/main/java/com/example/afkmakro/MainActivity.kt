@@ -48,7 +48,8 @@ class MainActivity : Activity() {
             Triple("scanSec", 2, "Tarama aralığı (sn)"),
             Triple("tol", 25, "Resim eşleşme toleransı (10-40, düşük = sıkı)"),
             Triple("clickMs", 200, "Otomatik tık aralığı (ms)"),
-            Triple("clickMax", 0, "Otomatik tık sayısı (0 = sınırsız)")
+            Triple("clickMax", 0, "Otomatik tık sayısı (0 = sınırsız)"),
+            Triple("autoScan", 0, "Roblox açılınca otomatik tara (1 = evet, 0 = hayır)")
         )
         val fields = mutableMapOf<String, EditText>()
         for ((key, def, label) in keys) {
