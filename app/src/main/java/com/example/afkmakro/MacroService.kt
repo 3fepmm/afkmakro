@@ -286,4 +286,101 @@ class MacroService : AccessibilityService() {
             steps.add(Step(sx, sy, ex, ey, dur, delay))
             lastEnd = System.currentTimeMillis()
             setStatus("Kayıt: ${steps.size} adım")
-        } else if (capMode == 1) {
+        } else if (capMode == 1) {            val r = Rect(
+                minOf(sx, e.rawX).toInt(), minOf(sy, e.rawY).toInt(),
+                maxOf(sx, e.rawX).toInt(), maxOf(sy, e.rawY).toInt()
+            )
+            hideCapture()
+            saveTemplate(r)
+        } else {
+            hideCapture()
+            startClick(sx, sy)
+        }
+    }
+
+    // ---------- Makro kaydı ----------
+
+    private fun toggleRecord() {
+        if (recording) {
+            recording = false
+            hideCapture()
+            Store.saveSteps(this, steps)
+            recBtn?.text = "Kayıt"
+            setStatus("Kaydedildi: ${steps.size} adım")
+        } else {
+            stopPlay("Kayıt modu")
+            steps = mutableListOf()
+            recording = true
+            lastEnd = 0L
+            recBtn?.text = "Bitir"
+            showCapture(0)
+            showPanel()
+            setStatus("Kayıt: dokun")
+        }
+    }
+
+    // ---------- Ortak ----------
+
+    private fun jittered(ms: Long, pct: Int): Long {
+        if (pct <= 0) return ms
+        val span = ms * pct / 100
+        return (ms - span + Random.nextLong(0, 2 * span + 1)).coerceAtLeast(50L)
+    }
+
+    private fun stopPlay(msg: String) {
+        playing = false
+        scanning = false
+        clicking = false
+        token++
+        h.removeCallbacksAndMessages(null)
+        if (!recording) hideCapture()
+        setStatus(msg)
+    }
+
+    private fun gesture(
+        x1: Float, y1: Float, x2: Float, y2: Float,
+        dur: Long, done: () -> Unit
+    ) {
+        val path = Path()
+        path.moveTo(x1, y1)
+        if (x1 != x2 || y1 != y2) path.lineTo(x2, y2)
+        val g = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, dur.coerceAtLeast(1L)))
+            .build()
+        val cb = object : AccessibilityService.GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                done()
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                done()
+            }
+        }
+        val ok = dispatchGesture(g, cb, null)
+        if (!ok) h.postDelayed({ done() }, 1000L)
+    }
+
+    private fun shoot(cb: (Bitmap?) -> Unit) {
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            mainExecutor,
+            object : AccessibilityService.TakeScreenshotCallback {
+                override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                    var out: Bitmap? = null
+                    try {
+                        val hb = result.hardwareBuffer
+                        val hw = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)
+                        out = hw?.copy(Bitmap.Config.ARGB_8888, false)
+                        hb.close()
+                    } catch (e: Exception) {
+                        out = null
+                    }
+                    cb(out)
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    cb(null)
+                }
+            }
+        )
+    }
