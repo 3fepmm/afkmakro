@@ -272,11 +272,13 @@ object Gozcu {
  * ekranAl  -> MacroService.shoot()
  * durumYaz -> MacroService.setStatus()
  * tikla    -> (x, y) EKRAN PİKSELİ cinsinden (oran değil)
+ * beyin    -> ekran NORMAL iken hareket / saldırı / kaçma / beceri kararlarını verir (isteğe bağlı)
  */
 class OyunBotu(
     private val ekranAl: ((Bitmap?) -> Unit) -> Unit,
     private val durumYaz: (String) -> Unit,
-    private val tikla: (Float, Float) -> Unit
+    private val tikla: (Float, Float) -> Unit,
+    private val beyin: Beyin? = null
 ) {
     private val el = Handler(Looper.getMainLooper())
     private val okuyucu = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -305,6 +307,7 @@ class OyunBotu(
         calisiyor = false
         jeton++
         el.removeCallbacksAndMessages(null)
+        beyin?.durdur()
         try { okuyucu.close() } catch (_: Exception) {}
     }
 
@@ -349,11 +352,20 @@ class OyunBotu(
                             val px = sonuc.tiklanacakX * ekranGen
                             val py = sonuc.tiklanacakY * ekranYuk
                             tikla(px, py)
+                            if (sonuc.durum == Durum.DUGME) beyin?.seviyeDegisti()
                             yazi += " | bastı " + px.toInt() + "," + py.toInt()
                         }
                     }
                     yazi += if (yesil) " | bar: yeşil" else " | bar: dolu değil"
+                    if (beyin != null) yazi += beyin.bilgi()
                     durumYaz(yazi)
+                    if (sonuc.durum == Durum.YD_BITTI) beyin?.seviyeDegisti()
+
+                    // Ekran normalse ve basılacak bir şey yoksa beyin karar verir
+                    if (beyin != null && sonuc.durum == Durum.NORMAL && !engel && sonuc.tiklanacakX == null) {
+                        val k = beyin.adim(bmp, ekran, ekranGen, ekranYuk)
+                        if (k > 0L) gecikme = k
+                    }
                 }
                 planla(my, gecikme)
             }
