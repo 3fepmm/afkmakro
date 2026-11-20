@@ -294,10 +294,24 @@ private fun toggleBot() {
         return
     }
     stopPlay("Gözcü açılıyor")
-    val yeni = OyunBotu(
+            val tik: (Float, Float) -> Unit = { x, y -> gesture(x, y, x, y, 90L) { } }
+        val sur: (Float, Float, Float, Float, Long) -> Unit =
+            { a, b, c, d, s -> gesture(a, b, c, d, s) { } }
+        val seri: (Float, Float, Int) -> Unit = { x, y, n ->
+            val gb = GestureDescription.Builder()
+            for (i in 0 until n) {
+                val p = Path()
+                p.moveTo(x, y)
+                gb.addStroke(GestureDescription.StrokeDescription(p, i * 220L, 70L))
+            }
+            dispatchGesture(gb.build(), null, null)
+        }
+        val ayar: (String, Int) -> Int = { k, v -> Store.prefs(this).getInt(k, v) }
+        val yeni = OyunBotu(
             { cb -> shoot(cb) },
             { t -> setStatus(t) },
-            { x, y -> gesture(x, y, x, y, 90L) { } }
+            tik,
+            Beyin(tik, sur, seri, ayar)
         )
     bot = yeni
     yeni.baslat()
