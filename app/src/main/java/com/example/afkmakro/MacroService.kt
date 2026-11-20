@@ -295,15 +295,10 @@ private fun toggleBot() {
     }
     stopPlay("Gözcü açılıyor")
     val yeni = OyunBotu(
-        ekranAl = { cb -> shoot(cb) },
-        durumYaz = { t -> setStatus(t) },
-        tikla = { xOran, yOran ->
-            val m = resources.displayMetrics
-            val x = xOran * m.widthPixels
-            val y = yOran * m.heightPixels
-            gesture(x, y, x, y, 60L) {}
-        }
-    )
+            { cb -> shoot(cb) },
+            { t -> setStatus(t) },
+            { x, y -> gesture(x, y, x, y, 90L) { } }
+        )
     bot = yeni
     yeni.baslat()
     refreshBubble()
