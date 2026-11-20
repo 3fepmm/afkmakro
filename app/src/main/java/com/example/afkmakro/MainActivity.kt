@@ -49,7 +49,15 @@ class MainActivity : Activity() {
             Triple("tol", 25, "Resim eşleşme toleransı (10-40, düşük = sıkı)"),
             Triple("clickMs", 200, "Otomatik tık aralığı (ms)"),
             Triple("clickMax", 0, "Otomatik tık sayısı (0 = sınırsız)"),
-            Triple("autoScan", 0, "Roblox açılınca otomatik tara (1 = evet, 0 = hayır)")
+            Triple("autoScan", 0, "Roblox açılınca otomatik tara (1 = evet, 0 = hayır)"),
+            Triple("bBeslen", 1, "Bot: yiyecek topla / gezin (1 = evet)"),
+            Triple("bSaldir", 1, "Bot: oyunculara saldır (1 = evet)"),
+            Triple("bKac", 1, "Bot: canı azalınca kaç (1 = evet)"),
+            Triple("bKacCan", 30, "Bot: kaçma sınırı (can % altı)"),
+            Triple("bBecer", 1, "Bot: becerileri kullan (1 = evet)"),
+            Triple("bSenkron", 1, "Bot: seviyemi menüden oku (1 = evet)"),
+            Triple("bTolerans", 0, "Bot: rakip seviye toleransı (0 = eşit/altı)"),
+            Triple("bLv", 0, "Bot: seviye okuma kapalıysa kendi seviyem")
         )
         val fields = mutableMapOf<String, EditText>()
         for ((key, def, label) in keys) {
