@@ -91,17 +91,19 @@ class MacroService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
-        token++
-        h.removeCallbacksAndMessages(null)
-        worker.shutdown()        bot?.durdur()
-        if (::wm.isInitialized) {
-            for (v in listOf<View?>(panel, bubble, capture)) {
-                if (v != null) {
-                    try { wm.removeView(v) } catch (e: Exception) {}
-                }
+    token++
+    h.removeCallbacksAndMessages(null)
+    worker.shutdown()
+    bot?.durdur()
+    bot = null
+    if (::wm.isInitialized) {
+        for (v in listOf<View?>(panel, bubble, capture)) {
+            if (v != null) {
+                try { wm.removeView(v) } catch (e: Exception) {}
             }
         }
-        super.onDestroy()
+    }
+    super.onDestroy()
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -276,7 +278,7 @@ class MacroService : AccessibilityService() {
     b.text = when {
         scanning -> "TARA"
         clicking -> "TIK"
-        playing -> "OYN"
+        playing  -> "OYN"
         bot != null -> "GÖZ"
         else -> "AFK"
     }
