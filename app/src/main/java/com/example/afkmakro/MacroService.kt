@@ -56,6 +56,7 @@ class MacroService : AccessibilityService() {
     private var lastEnd = 0L
     private var downWall = 0L
     private var lastPkg = ""
+    private var bot: OyunBotu? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -92,7 +93,7 @@ class MacroService : AccessibilityService() {
     override fun onDestroy() {
         token++
         h.removeCallbacksAndMessages(null)
-        worker.shutdown()
+        worker.shutdown()        bot?.durdur()
         if (::wm.isInitialized) {
             for (v in listOf<View?>(panel, bubble, capture)) {
                 if (v != null) {
@@ -219,7 +220,11 @@ class MacroService : AccessibilityService() {
 
         root.addView(st)
         root.addView(row1)
+        val row3 = LinearLayout(this)
+        row3.orientation = LinearLayout.HORIZONTAL
+        row3.addView(btn("Gözcü", Color.rgb(236, 72, 153)) { toggleBot() })
         root.addView(row2)
+        root.addView(row3)
         makeDraggable(root, null)
         panel = root
 
@@ -264,7 +269,19 @@ class MacroService : AccessibilityService() {
         refreshBubble()
     }
 
-    private fun refreshBubble() {
+    private fun refreshBubble() {     private fun toggleBot() {
+        val eski = bot
+        if (eski != null) {
+            eski.durdur()
+            bot = null
+            setStatus("Gözcü durdu")
+            return
+        }
+        stopPlay("Gözcü açılıyor")
+        val yeni = OyunBotu({ cb -> shoot(cb) }, { t -> setStatus(t) })
+        bot = yeni
+        yeni.baslat()
+    }
         val b = bubble ?: return
         val on = playing || scanning || clicking
         b.background = if (on) bOn else bOff
@@ -415,8 +432,9 @@ class MacroService : AccessibilityService() {
         clicking = false
         token++
         h.removeCallbacksAndMessages(null)
+                bot?.durdur()
+        bot = null
         if (!recording) hideCapture()
-        setStatus(msg)
     }
 
     private fun gesture(
