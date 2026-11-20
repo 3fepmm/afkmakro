@@ -269,24 +269,43 @@ class MacroService : AccessibilityService() {
         refreshBubble()
     }
 
-    private fun refreshBubble() {     private fun toggleBot() {
-        val eski = bot
-        if (eski != null) {
-            eski.durdur()
-            bot = null
-            setStatus("Gözcü durdu")
-            return
+    private fun refreshBubble() {
+    val b = bubble ?: return
+    val on = playing || scanning || clicking || bot != null
+    b.background = if (on) bOn else bOff
+    b.text = when {
+        scanning -> "TARA"
+        clicking -> "TIK"
+        playing -> "OYN"
+        bot != null -> "GÖZ"
+        else -> "AFK"
+    }
+}
+
+private fun toggleBot() {
+    val eski = bot
+    if (eski != null) {
+        eski.durdur()
+        bot = null
+        setStatus("Gözcü durdu")
+        refreshBubble()
+        return
+    }
+    stopPlay("Gözcü açılıyor")
+    val yeni = OyunBotu(
+        ekranAl = { cb -> shoot(cb) },
+        durumYaz = { t -> setStatus(t) },
+        tikla = { xOran, yOran ->
+            val m = resources.displayMetrics
+            val x = xOran * m.widthPixels
+            val y = yOran * m.heightPixels
+            gesture(x, y, x, y, 60L) {}
         }
-        stopPlay("Gözcü açılıyor")
-        val yeni = OyunBotu({ cb -> shoot(cb) }, { t -> setStatus(t) })
-        bot = yeni
-        yeni.baslat()
-    }
-        val b = bubble ?: return
-        val on = playing || scanning || clicking
-        b.background = if (on) bOn else bOff
-        b.text = if (scanning) "TARA" else if (clicking) "TIK" else if (playing) "OYN" else "AFK"
-    }
+    )
+    bot = yeni
+    yeni.baslat()
+    refreshBubble()
+}
 
     private fun setStatus(t: String) {
         status?.text = t
@@ -427,14 +446,16 @@ class MacroService : AccessibilityService() {
     }
 
     private fun stopPlay(msg: String) {
-        playing = false
-        scanning = false
-        clicking = false
-        token++
-        h.removeCallbacksAndMessages(null)
-                bot?.durdur()
-        bot = null
-        if (!recording) hideCapture()
+    playing = false
+    scanning = false
+    clicking = false
+    token++
+    h.removeCallbacksAndMessages(null)
+    bot?.durdur()
+    bot = null
+    if (!recording) hideCapture()
+    setStatus(msg)
+    refreshBubble()
     }
 
     private fun gesture(
