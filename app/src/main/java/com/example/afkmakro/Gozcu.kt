@@ -7,10 +7,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
-// ADIM 1: SADECE İZLEME. Bu dosya ekrana hiçbir şekilde dokunmaz.
-// Ekran görüntüsünü alır, yazıları okur, ne gördüğünü panelin durum satırına yazar.
-
-/** Ekranda okunan tek bir satır yazı. x ve y satırın merkezi (ekranın 0..1 oranı). */
+/** Ekranda okunan tek bir satır yazı. x ve y satırın merkezi (0..1 oranı). */
 data class Yazi(val metin: String, val x: Float, val y: Float)
 
 /** Bir ekran görüntüsünden okunan tüm satırlar. */
@@ -26,12 +23,13 @@ data class Sonuc(
     val durum: Durum,
     val dugme: String?,
     val seviyeler: List<Int>,
-    val asama: String?
+    val asama: String?,
+    val tiklanacakX: Float? = null,   // 0..1
+    val tiklanacakY: Float? = null
 )
 
 object Gozcu {
-    // Üst ortadaki ilerleme düğmesinin bölgesi (ekran oranı).
-    // Evrimleş / Açma / Yeniden Doğuş! yazıları hep burada çıkıyor.
+    // Üst ortadaki ilerleme düğmesinin bölgesi
     private const val DUGME_X1 = 0.38f
     private const val DUGME_X2 = 0.62f
     private const val DUGME_Y1 = 0.14f
@@ -40,10 +38,8 @@ object Gozcu {
     private val LV = Regex("lv\\s*(\\d{1,2})")
     private val ASAMA = Regex("asama\\s*(\\d{1,2})\\s*/\\s*(\\d{1,2})")
 
-    // Panelin kendi durum yazısını yanlışlıkla oyun yazısı sanmamak için.
-    private val KENDI_YAZIMIZ = listOf("gozcu", "kademe", "rakip")
+    private val KENDI_YAZIMIZ = listOf("gozcu", "kademe", "rakip", "afk")
 
-    /** Küçük harfe çevirir ve Türkçe harfleri sadeleştirir: "Doğuş" -> "dogus". */
     fun duzle(s: String): String {
         val sb = StringBuilder()
         for (ch in s) {
@@ -62,7 +58,6 @@ object Gozcu {
     }
 
     fun incele(ekran: Ekran): Sonuc {
-        // Kendi yazdığımız durum satırlarını ayıkla
         val satirlar = ArrayList<Yazi>()
         for (y in ekran.yazilar) {
             val m = duzle(y.metin)
@@ -75,82 +70,142 @@ object Gozcu {
         val metinler = satirlar.map { duzle(it.metin) }
         val tumu = metinler.joinToString(" | ")
 
-        // Üst ortadaki ilerleme düğmesi
+        // Üst ortadaki düğme
         var dugme: String? = null
+        var dugmeX: Float? = null
+        var dugmeY: Float? = null
         for (s in satirlar) {
             if (s.x in DUGME_X1..DUGME_X2 && s.y in DUGME_Y1..DUGME_Y2) {
                 val m = duzle(s.metin)
-                if (m.contains("yeniden dogus")) dugme = "YENİDEN DOĞUŞ"
-                if (m.contains("evrimles")) dugme = "EVRİMLEŞ"
-                if (m.contains("acma")) dugme = "AÇMA"
+                if (m.contains("yeniden dogus")) {
+                    dugme = "YENİDEN DOĞUŞ"
+                    dugmeX = s.x
+                    dugmeY = s.y
+                }
+                if (m.contains("evrimles")) {
+                    dugme = "EVRİMLEŞ"
+                    dugmeX = s.x
+                    dugmeY = s.y
+                }
+                if (m.contains("acma")) {
+                    dugme = "AÇMA"
+                    dugmeX = s.x
+                    dugmeY = s.y
+                }
             }
         }
 
-        // Oyuncu etiketlerindeki LV değerleri
+        // Seviyeler
         val seviyeler = ArrayList<Int>()
         for (m in metinler) {
             for (e in LV.findAll(m)) {
-                val n = e.groupValues[1].toIntOrNull()
-                if (n != null) seviyeler.add(n)
+                e.groupValues[1].toIntOrNull()?.let { seviyeler.add(it) }
             }
         }
 
-        // Evrimler penceresindeki "Aşama 4 / 21"
+        // Aşama
         var asama: String? = null
         for (m in metinler) {
             val e = ASAMA.find(m)
             if (e != null) asama = e.groupValues[1] + "/" + e.groupValues[2]
         }
 
-        val durum = when {
-            tumu.contains("tekrar dokunun") -> Durum.YD_ONAY
-            tumu.contains("yeniden dogmaya hazir") -> Durum.YD_HAZIR
-            tumu.contains("henuz hazir degil") -> Durum.YD_HAZIR_DEGIL
-            tumu.contains("yeniden canlan") -> Durum.OLUM
-            tumu.contains("guc sonsuza kadar") -> Durum.YD_BITTI
-            dugme != null -> Durum.DUGME
-            else -> Durum.NORMAL
+        // Durum + tıklanacak nokta bulma
+        var durum = Durum.NORMAL
+        var tikX: Float? = null
+        var tikY: Float? = null
+
+        when {
+            tumu.contains("tekrar dokunun") -> {
+                durum = Durum.YD_ONAY
+                // "Tekrar dokunun" yazısının konumunu bul
+                for (s in satirlar) {
+                    if (duzle(s.metin).contains("tekrar dokunun")) {
+                        tikX = s.x
+                        tikY = s.y
+                        break
+                    }
+                }
+            }
+            tumu.contains("yeniden dogmaya hazir") -> {
+                durum = Durum.YD_HAZIR
+                // Hazır yazısını veya yakındaki düğmeyi tıkla
+                for (s in satirlar) {
+                    val m = duzle(s.metin)
+                    if (m.contains("yeniden dogmaya hazir") || m.contains("yeniden dogus")) {
+                        tikX = s.x
+                        tikY = s.y
+                        break
+                    }
+                }
+            }
+            tumu.contains("henuz hazir degil") -> {
+                durum = Durum.YD_HAZIR_DEGIL
+            }
+            tumu.contains("yeniden canlan") || tumu.contains("simdi yeniden canlan") -> {
+                durum = Durum.OLUM
+                for (s in satirlar) {
+                    val m = duzle(s.metin)
+                    if (m.contains("yeniden canlan") || m.contains("simdi yeniden")) {
+                        tikX = s.x
+                        tikY = s.y
+                        break
+                    }
+                }
+            }
+            tumu.contains("guc sonsuza kadar") -> {
+                durum = Durum.YD_BITTI
+            }
+            dugme != null -> {
+                durum = Durum.DUGME
+                tikX = dugmeX
+                tikY = dugmeY
+            }
         }
-        return Sonuc(durum, dugme, seviyeler, asama)
+
+        return Sonuc(durum, dugme, seviyeler, asama, tikX, tikY)
     }
 
-    /** Panelin durum satırına yazılacak KISA özet. (Satır sarmasın diye kısa tutuldu.) */
     fun ozet(s: Sonuc): String {
         val ana = when (s.durum) {
-            Durum.OLUM -> "ÖLÜM ekranı"
-            Durum.YD_ONAY -> "YD onay"
-            Durum.YD_HAZIR -> "YD pencere HAZIR"
-            Durum.YD_HAZIR_DEGIL -> "YD pencere hazır değil"
+            Durum.OLUM -> "ÖLÜM → tıklanacak"
+            Durum.YD_ONAY -> "YD onay → tıklanacak"
+            Durum.YD_HAZIR -> "YD HAZIR → tıklanacak"
+            Durum.YD_HAZIR_DEGIL -> "YD hazır değil"
             Durum.YD_BITTI -> "YD tamamlandı"
-            Durum.DUGME -> "düğme " + (s.dugme ?: "?")
+            Durum.DUGME -> "düğme ${s.dugme ?: "?"} → tıklanacak"
             Durum.NORMAL -> "normal"
         }
-        var t = "Gözcü: " + ana
-        if (s.asama != null) t += " | Kademe " + s.asama
-        if (s.seviyeler.isNotEmpty()) t += " | Rakip " + s.seviyeler.take(3).joinToString(",")
+        var t = "Gözcü: $ana"
+        if (s.asama != null) t += " | Kademe ${s.asama}"
+        if (s.seviyeler.isNotEmpty()) t += " | Rakip ${s.seviyeler.take(3).joinToString(",")}"
         return t
     }
 }
 
 /**
- * Birkaç saniyede bir ekran görüntüsü alır, yazıları okur, durumu bildirir.
- * ekranAl: MacroService'teki shoot() fonksiyonu.
- * durumYaz: MacroService'teki setStatus() fonksiyonu.
+ * Ekranı okur + gerekli durumlarda tıklar.
+ * ekranAl  → MacroService.shoot()
+ * durumYaz → MacroService.setStatus()
+ * tikla    → (xOran, yOran) ekranın 0..1 oranı
  */
 class OyunBotu(
     private val ekranAl: ((Bitmap?) -> Unit) -> Unit,
-    private val durumYaz: (String) -> Unit
+    private val durumYaz: (String) -> Unit,
+    private val tikla: (Float, Float) -> Unit
 ) {
     private val el = Handler(Looper.getMainLooper())
     private val okuyucu = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private var calisiyor = false
     private var jeton = 0
+    private var sonTiklama = 0L
+    private val tiklamaCooldown = 1800L   // aynı yere çok hızlı basmasın
 
     fun baslat() {
         if (calisiyor) return
         calisiyor = true
         jeton++
-        durumYaz("Gözcü başladı")
+        durumYaz("Gözcü + Tıklama başladı")
         dongu(jeton)
     }
 
@@ -158,37 +213,42 @@ class OyunBotu(
         calisiyor = false
         jeton++
         el.removeCallbacksAndMessages(null)
-        try {
-            okuyucu.close()
-        } catch (e: Exception) {
-        }
+        try { okuyucu.close() } catch (_: Exception) {}
     }
 
     private fun dongu(my: Int) {
         if (!calisiyor || my != jeton) return
-        ekranAl({ bmp ->
-            if (calisiyor && my == jeton) {
-                if (bmp == null) {
-                    durumYaz("Gözcü: ekran alınamadı")
-                    planla(my)
-                } else {
-                    oku(bmp, { ekran ->
-                        if (calisiyor && my == jeton) {
-                            if (ekran == null) {
-                                durumYaz("Gözcü: yazı okunamadı")
-                            } else {
-                                durumYaz(Gozcu.ozet(Gozcu.incele(ekran)))
-                            }
-                            planla(my)
-                        }
-                    })
-                }
+        ekranAl { bmp ->
+            if (!calisiyor || my != jeton) return@ekranAl
+            if (bmp == null) {
+                durumYaz("Gözcü: ekran alınamadı")
+                planla(my)
+                return@ekranAl
             }
-        })
+            oku(bmp) { ekran ->
+                if (!calisiyor || my != jeton) return@oku
+                if (ekran == null) {
+                    durumYaz("Gözcü: yazı okunamadı")
+                } else {
+                    val sonuc = Gozcu.incele(ekran)
+                    durumYaz(Gozcu.ozet(sonuc))
+
+                    // Tıklama kararı
+                    if (sonuc.tiklanacakX != null && sonuc.tiklanacakY != null) {
+                        val simdi = System.currentTimeMillis()
+                        if (simdi - sonTiklama > tiklamaCooldown) {
+                            sonTiklama = simdi
+                            tikla(sonuc.tiklanacakX, sonuc.tiklanacakY)
+                        }
+                    }
+                }
+                planla(my)
+            }
+        }
     }
 
     private fun planla(my: Int) {
-        el.postDelayed({ dongu(my) }, 2500L)
+        el.postDelayed({ dongu(my) }, 2200L)
     }
 
     private fun oku(bmp: Bitmap, bitti: (Ekran?) -> Unit) {
@@ -202,7 +262,13 @@ class OyunBotu(
                     for (satir in blok.lines) {
                         val r = satir.boundingBox
                         if (r != null) {
-                            liste.add(Yazi(satir.text, r.exactCenterX() / gen, r.exactCenterY() / yuk))
+                            liste.add(
+                                Yazi(
+                                    satir.text,
+                                    r.exactCenterX() / gen,
+                                    r.exactCenterY() / yuk
+                                )
+                            )
                         }
                     }
                 }
