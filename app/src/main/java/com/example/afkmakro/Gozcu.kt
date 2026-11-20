@@ -58,112 +58,136 @@ object Gozcu {
     }
 
     fun incele(ekran: Ekran): Sonuc {
-        val satirlar = ArrayList<Yazi>()
-        for (y in ekran.yazilar) {
-            val m = duzle(y.metin)
-            var bizim = false
-            for (k in KENDI_YAZIMIZ) {
-                if (m.contains(k)) bizim = true
-            }
-            if (!bizim) satirlar.add(y)
+    val satirlar = ArrayList<Yazi>()
+    for (y in ekran.yazilar) {
+        val m = duzle(y.metin)
+        var bizim = false
+        for (k in KENDI_YAZIMIZ) {
+            if (m.contains(k)) bizim = true
         }
-        val metinler = satirlar.map { duzle(it.metin) }
-        val tumu = metinler.joinToString(" | ")
+        if (!bizim) satirlar.add(y)
+    }
+    val metinler = satirlar.map { duzle(it.metin) }
+    val tumu = metinler.joinToString(" | ")
 
-        // Üst ortadaki düğme
-        var dugme: String? = null
-        var dugmeX: Float? = null
-        var dugmeY: Float? = null
-        for (s in satirlar) {
-            if (s.x in DUGME_X1..DUGME_X2 && s.y in DUGME_Y1..DUGME_Y2) {
+    // Üst ortadaki düğme
+    var dugme: String? = null
+    var dugmeX: Float? = null
+    var dugmeY: Float? = null
+    for (s in satirlar) {
+        if (s.x in DUGME_X1..DUGME_X2 && s.y in DUGME_Y1..DUGME_Y2) {
+            val m = duzle(s.metin)
+            if (m.contains("yeniden dogus")) {
+                dugme = "YENİDEN DOĞUŞ"
+                dugmeX = s.x
+                dugmeY = s.y
+            }
+            if (m.contains("evrimles")) {
+                dugme = "EVRİMLEŞ"
+                dugmeX = s.x
+                dugmeY = s.y
+            }
+            if (m.contains("acma")) {
+                dugme = "AÇMA"
+                dugmeX = s.x
+                dugmeY = s.y
+            }
+        }
+    }
+
+    // Seviyeler
+    val seviyeler = ArrayList<Int>()
+    for (m in metinler) {
+        for (e in LV.findAll(m)) {
+            e.groupValues[1].toIntOrNull()?.let { seviyeler.add(it) }
+        }
+    }
+
+    // Aşama
+    var asama: String? = null
+    for (m in metinler) {
+        val e = ASAMA.find(m)
+        if (e != null) asama = e.groupValues[1] + "/" + e.groupValues[2]
+    }
+
+    // Durum + tıklanacak nokta
+    var durum = Durum.NORMAL
+    var tikX: Float? = null
+    var tikY: Float? = null
+
+    when {
+        // 1. Ölüm ekranı
+        tumu.contains("yeniden canlan") || tumu.contains("simdi yeniden canlan") -> {
+            durum = Durum.OLUM
+            for (s in satirlar) {
                 val m = duzle(s.metin)
-                if (m.contains("yeniden dogus")) {
-                    dugme = "YENİDEN DOĞUŞ"
-                    dugmeX = s.x
-                    dugmeY = s.y
-                }
-                if (m.contains("evrimles")) {
-                    dugme = "EVRİMLEŞ"
-                    dugmeX = s.x
-                    dugmeY = s.y
-                }
-                if (m.contains("acma")) {
-                    dugme = "AÇMA"
-                    dugmeX = s.x
-                    dugmeY = s.y
+                if (m.contains("yeniden canlan") || m.contains("simdi yeniden")) {
+                    tikX = s.x
+                    tikY = s.y
+                    break
                 }
             }
         }
 
-        // Seviyeler
-        val seviyeler = ArrayList<Int>()
-        for (m in metinler) {
-            for (e in LV.findAll(m)) {
-                e.groupValues[1].toIntOrNull()?.let { seviyeler.add(it) }
+        // 2. Yeniden doğuş onay ekranı ("Tekrar dokunun")
+        tumu.contains("tekrar dokunun") -> {
+            durum = Durum.YD_ONAY
+            for (s in satirlar) {
+                if (duzle(s.metin).contains("tekrar dokunun")) {
+                    tikX = s.x
+                    tikY = s.y
+                    break
+                }
             }
         }
 
-        // Aşama
-        var asama: String? = null
-        for (m in metinler) {
-            val e = ASAMA.find(m)
-            if (e != null) asama = e.groupValues[1] + "/" + e.groupValues[2]
-        }
+        // 3. Yeniden doğuş penceresi açık ve HAZIR
+        tumu.contains("yeniden dogmaya hazir") || tumu.contains("yeniden dogus x") -> {
+            durum = Durum.YD_HAZIR
 
-        // Durum + tıklanacak nokta bulma
-        var durum = Durum.NORMAL
-        var tikX: Float? = null
-        var tikY: Float? = null
+            // Öncelik: Sarı büyük "YENİDEN DOĞUŞ" butonunu bul
+            var enIyi: Yazi? = null
+            for (s in satirlar) {
+                val m = duzle(s.metin)
+                if (m.contains("yeniden dogus") && (m.contains("x") || m.contains("x6") || m.contains("x5") || m.contains("x7"))) {
+                    // En alttaki ve en büyük ihtimalle buton olanı seç
+                    if (enIyi == null || s.y > enIyi.y) {
+                        enIyi = s
+                    }
+                }
+            }
 
-        when {
-            tumu.contains("tekrar dokunun") -> {
-                durum = Durum.YD_ONAY
-                // "Tekrar dokunun" yazısının konumunu bul
+            // Bulamazsa "Yeniden doğmaya hazır!" yazısının biraz altını tıkla
+            if (enIyi != null) {
+                tikX = enIyi.x
+                tikY = enIyi.y
+            } else {
                 for (s in satirlar) {
-                    if (duzle(s.metin).contains("tekrar dokunun")) {
+                    if (duzle(s.metin).contains("yeniden dogmaya hazir")) {
                         tikX = s.x
-                        tikY = s.y
+                        tikY = (s.y + 0.08f).coerceAtMost(0.92f) // biraz aşağı tıkla
                         break
                     }
                 }
             }
-            tumu.contains("yeniden dogmaya hazir") -> {
-                durum = Durum.YD_HAZIR
-                // Hazır yazısını veya yakındaki düğmeyi tıkla
-                for (s in satirlar) {
-                    val m = duzle(s.metin)
-                    if (m.contains("yeniden dogmaya hazir") || m.contains("yeniden dogus")) {
-                        tikX = s.x
-                        tikY = s.y
-                        break
-                    }
-                }
-            }
-            tumu.contains("henuz hazir degil") -> {
-                durum = Durum.YD_HAZIR_DEGIL
-            }
-            tumu.contains("yeniden canlan") || tumu.contains("simdi yeniden canlan") -> {
-                durum = Durum.OLUM
-                for (s in satirlar) {
-                    val m = duzle(s.metin)
-                    if (m.contains("yeniden canlan") || m.contains("simdi yeniden")) {
-                        tikX = s.x
-                        tikY = s.y
-                        break
-                    }
-                }
-            }
-            tumu.contains("guc sonsuza kadar") -> {
-                durum = Durum.YD_BITTI
-            }
-            dugme != null -> {
-                durum = Durum.DUGME
-                tikX = dugmeX
-                tikY = dugmeY
-            }
         }
 
-        return Sonuc(durum, dugme, seviyeler, asama, tikX, tikY)
+        tumu.contains("henuz hazir degil") -> {
+            durum = Durum.YD_HAZIR_DEGIL
+        }
+
+        tumu.contains("guc sonsuza kadar") -> {
+            durum = Durum.YD_BITTI
+        }
+
+        dugme != null -> {
+            durum = Durum.DUGME
+            tikX = dugmeX
+            tikY = dugmeY
+        }
+    }
+
+    return Sonuc(durum, dugme, seviyeler, asama, tikX, tikY)
     }
 
     fun ozet(s: Sonuc): String {
@@ -199,7 +223,7 @@ class OyunBotu(
     private var calisiyor = false
     private var jeton = 0
     private var sonTiklama = 0L
-    private val tiklamaCooldown = 1800L   // aynı yere çok hızlı basmasın
+    private val tiklamaCooldown = 1400L   // aynı yere çok hızlı basmasın
 
     fun baslat() {
         if (calisiyor) return
@@ -248,7 +272,7 @@ class OyunBotu(
     }
 
     private fun planla(my: Int) {
-        el.postDelayed({ dongu(my) }, 2200L)
+        el.postDelayed({ dongu(my) }, 1500L)
     }
 
     private fun oku(bmp: Bitmap, bitti: (Ekran?) -> Unit) {
